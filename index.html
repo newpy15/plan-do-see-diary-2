@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://*.supabase.co; img-src data:; base-uri 'none'; form-action 'none'">
-<title>플랜두씨 다이어리</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://*.supabase.co; img-src data:; base-uri 'none'; form-action 'none'">
+<title>플랜두씨 다이어리 2</title>
 <style>
 :root{
   --bg:#f3f7f7; --card:#fff; --ink:#1e2b31; --muted:#5a6a72; --line:#d5e0e2;
@@ -73,6 +73,7 @@ th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertic
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:8px;max-width:90vw;z-index:20;display:none}
 #toast.bad{background:var(--red);color:#fff}
 .banner-err{background:var(--red-soft);color:var(--red);border:1px solid var(--red);border-radius:var(--radius);padding:10px 14px;margin:10px 0}
+[hidden]{display:none!important}
 code,.mono{font-family:ui-monospace,Consolas,monospace;font-size:13px}
 </style>
 </head>
@@ -80,14 +81,14 @@ code,.mono{font-family:ui-monospace,Consolas,monospace;font-size:13px}
 <div class="wrap">
   <header class="top">
     <div>
-      <span class="badge">과제 6</span>
-      <h1>플랜두씨 다이어리 1<br><span class="muted" style="font-size:17px;font-weight:600">내 계획과 실제를 담는 앱</span></h1>
-      <p class="muted small">계획(Plan) → 실제로 한 일(Do) → 돌아보기(See). 자료는 서버 데이터베이스에 저장되어 새로고침해도 그대로 남습니다.</p>
+      <span class="badge">과제 7</span>
+      <h1>플랜두씨 다이어리 2<br><span class="muted" style="font-size:17px;font-weight:600">로그인한 나만 보는 계획·실제 기록</span></h1>
+      <p class="muted small">계획(Plan) → 실제로 한 일(Do) → 돌아보기(See). 자료는 내 계정에 묶여 서버 데이터베이스에 저장됩니다.</p>
     </div>
-    <div class="row"><div class="badge" id="status">서버 확인 중…</div><button class="btn sm ghost" id="exportBtn" type="button">내 자료 내보내기</button></div>
+    <div class="row"><div class="badge" id="status">서버 확인 중…</div><button class="btn sm ghost" id="logoutBtn" type="button" hidden>로그아웃</button></div>
   </header>
 
-  <div class="notice" id="notice" role="note">지금은 로그인이 없어 링크를 아는 사람은 누구나 볼 수 있습니다. 남이 봐도 괜찮은 내용만 넣으세요</div>
+  <div class="notice" id="notice" role="note">로그인이 필요합니다.</div>
   <div id="fatal"></div>
 
   <nav class="tabs" role="tablist" id="tabs"></nav>
@@ -95,6 +96,7 @@ code,.mono{font-family:ui-monospace,Consolas,monospace;font-size:13px}
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
 
+<script src="vendor/supabase-js-2.117.0.js"></script>
 <script>
 "use strict";
 /* ============ 도우미: 모든 글자는 textContent로만 화면에 넣는다(스크립트 모양 글자도 그대로 보임) ============ */
@@ -124,20 +126,19 @@ function toast(msg, bad){
 }
 /* ============ 설정: Supabase 프로젝트 값 (README 참고) ============
    SUPABASE_KEY에는 '공개용(publishable)' 키만 넣습니다. 관리자용 비밀 키는 절대 넣지 마세요. */
-const SUPABASE_URL = "https://gwxllisihhugupgyanys.supabase.co";
-const SUPABASE_KEY = "sb_publishable_7fSv7GCweipfU7kWKb-DLQ_FMVbtJ59";
+const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+const SUPABASE_KEY = "YOUR-PUBLISHABLE-KEY";
 
-/* ===== DATA ENGINE START ===== 화면이 Supabase(서버 DB)를 직접 부릅니다.
-   완료·집계·거르기·정렬·"서울 오늘" 계산은 DB 함수(supabase.sql)가 하고, 여기서는 입력 확인과 호출만 합니다. */
-const PUBLIC_NOTICE = "지금은 로그인이 없어 링크를 아는 사람은 누구나 볼 수 있습니다. 남이 봐도 괜찮은 내용만 넣으세요";
-const SCHEMA_VERSION = "pds-schema-v2";
+/* ===== DATA ENGINE START ===== 로그인은 Supabase Auth(supabase-js 2.117.0)가 맡습니다.
+   자료는 DB 함수(supabase.sql)만 거쳐서 다루며, 함수가 "지금 요청한 사람"을 확인해 그 사람의 자료만 줍니다.
+   여기서는 입력 확인과 호출만 합니다. */
+const SCHEMA_VERSION = "pds-schema-v3";
 class ApiError extends Error { constructor(message){ super(message); } }
 
 const KST_MS = 9 * 3600 * 1000;
 const kstParts = ms => new Date(ms + KST_MS).toISOString();               // 서울 시각을 ISO 모양으로
 const todayKst = () => kstParts(Date.now()).slice(0, 10);                  // 화면 기본값 용도(집계의 "오늘"은 DB가 계산)
 const fmtKst = iso => iso ? kstParts(Date.parse(iso)).slice(0, 16).replace("T", " ") : "—";   // 서울 시각으로 보여 주기
-const newId = prefix => prefix + "-" + crypto.randomUUID().replace(/-/g, "").slice(0, 8);
 
 function vText(d, key, max, required = true){
   let v = d[key] ?? "";
@@ -188,71 +189,73 @@ function vDateTime(d, key){
   return new Date(ms).toISOString();
 }
 
-/* ----- Supabase REST (PostgREST) ----- */
-async function sb(method, path, { query = "", body, prefer = "return=representation" } = {}){
-  if (/YOUR-PROJECT/.test(SUPABASE_URL) || /YOUR-/.test(SUPABASE_KEY))
-    throw new Error("index.html 위쪽의 SUPABASE_URL과 SUPABASE_KEY를 채워 주세요.");
-  let res;
-  try {
-    res = await fetch(SUPABASE_URL + "/rest/v1/" + path + (query ? "?" + query : ""), {
-      method, headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json", Prefer: prefer },
-      body: body === undefined ? undefined : JSON.stringify(body) });
-  } catch (e) { throw new Error("데이터베이스(Supabase)에 연결할 수 없습니다."); }
-  if (!res.ok){
-    const e = await res.json().catch(() => ({}));
-    if (res.status === 401 || res.status === 403) throw new Error("DB 접근이 거부되었습니다. supabase.sql의 정책(RLS)이 적용됐는지 확인하세요.");
-    if (res.status === 404 && /relation|function|rest\/v1/.test(JSON.stringify(e) + path)) throw new Error("DB 표·함수를 찾을 수 없습니다. supabase.sql을 실행했는지 확인하세요.");
-    if (e.code === "23503") throw new Error("선택한 계획 또는 할 일이 없습니다.");
-    throw new Error(e.message || "DB 요청 실패 (" + res.status + ")");
-  }
-  const text = await res.text();
-  return text ? JSON.parse(text) : [];
+/* ----- 로그인 (Supabase Auth) ----- */
+let _client = null;
+function client(){
+  if (_client) return _client;
+  if (/YOUR-/.test(SUPABASE_URL) || /YOUR-/.test(SUPABASE_KEY)) throw new Error("index.html 위쪽의 SUPABASE_URL과 SUPABASE_KEY를 채워 주세요.");
+  if (typeof supabase === "undefined") throw new Error("로그인 라이브러리(vendor/supabase-js-2.117.0.js)를 불러오지 못했습니다.");
+  // 로그인 값은 이 브라우저에만 저장되고, 주소(URL)에는 절대 싣지 않는다(detectSessionInUrl: false).
+  // 자료는 DB 의 diary2 칸(스키마)에만 있다. 같은 프로젝트의 6번 자료(public 칸)와 섞이지 않는다.
+  _client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { db: { schema: "diary2" }, auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+  return _client;
 }
-const rpc = (fn, args = {}) => sb("POST", "rpc/" + fn, { body: args });
-const eq = v => "eq." + encodeURIComponent(v);
-async function oneTodo(id){
-  const r = await rpc("todo_list", { p_todo_id: id });
-  if (!r.length) throw new ApiError("할 일을 찾을 수 없습니다.");
-  return r[0];
+async function currentSession(){ return (await client().auth.getSession()).data.session; }
+const SAME_LOGIN_MESSAGE = "이메일 또는 비밀번호가 맞지 않습니다.";   // 아이디가 없을 때와 비밀번호가 틀렸을 때 똑같은 문구
+async function signUp(email, password){
+  const { data, error } = await client().auth.signUp({ email, password });
+  if (error){
+    if (/already|registered|exists/i.test(error.message + " " + (error.code || ""))) throw new Error("이미 가입된 이메일입니다.");
+    throw new Error(error.message);
+  }
+  if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) throw new Error("이미 가입된 이메일입니다.");
+  if (!data.session) throw new Error("가입은 됐지만 이메일 확인이 필요한 설정입니다. (Supabase의 Confirm email 을 꺼 주세요)");
+  return data.session;
+}
+async function signIn(email, password){
+  const { data, error } = await client().auth.signInWithPassword({ email, password });
+  if (error){
+    if (/invalid login|invalid credentials|not found/i.test(error.message)) throw new Error(SAME_LOGIN_MESSAGE);
+    throw new Error(error.message);
+  }
+  return data.session;
+}
+async function signOutNow(){ await client().auth.signOut(); }   // 서버가 이 로그인(세션)을 지운다 → 이전 값은 401
+
+/* ----- 자료 호출: DB 함수만 부른다 ----- */
+async function rpc(fn, args = {}){
+  const { data, error, status } = await client().rpc(fn, args);
+  if (error){
+    if (status === 401){
+      await client().auth.signOut({ scope: "local" }).catch(() => {});
+      throw Object.assign(new Error("로그인이 필요하거나 이미 끝났습니다. 다시 로그인하세요."), { authLost: true });
+    }
+    if (error.code === "PGRST202") throw new Error("DB 함수를 찾을 수 없습니다. supabase.sql을 실행했는지 확인하세요.");
+    throw new Error(error.message || "요청에 실패했습니다.");
+  }
+  return data;
 }
 
 /* ----- 라우트 ----- */
 const ROUTES = [];
 const route = (method, pattern, fn) => ROUTES.push([method, new RegExp("^" + pattern + "$"), fn]);
+const oneTodo = id => rpc("todo_get", { p_id: id });
 
-route("GET", "/meta", async () => ({ ...(await rpc("app_meta")), schema_version: SCHEMA_VERSION, public_notice: PUBLIC_NOTICE }));
-
-async function exportData(){
-  const [plans, plan_history, todos, exec_logs, reviews] = await Promise.all(
-    ["plans", "plan_history", "todos", "exec_logs", "reviews"].map(t => sb("GET", t, { query: "select=*&order=" + (t === "reviews" ? "plan_id" : t === "plan_history" ? "id" : "seq") + ".asc" })));
-  return { schema_version: SCHEMA_VERSION, exported_at: new Date().toISOString(), timezone: "저장은 UTC(timestamptz), 화면 표시는 Asia/Seoul",
-    plans, plan_history, todos, exec_logs, reviews };
-}
+route("GET", "/meta", async () => ({ ...(await rpc("app_meta")), schema_version: SCHEMA_VERSION }));
 
 // 계획
-route("GET", "/plans", async () => ({ items: await sb("GET", "plans", { query: "select=*&order=priority.asc,start_date.asc,seq.asc" }) }));
-function planFields(b){
+function planArgs(b){
   const start = vDate(b, "start_date"), end = vDate(b, "end_date");
   if (end < start) throw new ApiError("끝나는 날은 시작하는 날보다 같거나 뒤여야 합니다.");
-  return { title: vText(b, "title", 200), category: vText(b, "category", 30), start_date: start, end_date: end,
-    priority: vInt(b, "priority", 1, 3), success_criteria: vText(b, "success_criteria", 500), estimated_minutes: vInt(b, "estimated_minutes", 0, 100000) };
+  return { p_title: vText(b, "title", 200), p_category: vText(b, "category", 30), p_start: start, p_end: end,
+    p_priority: vInt(b, "priority", 1, 3), p_criteria: vText(b, "success_criteria", 500), p_estimated: vInt(b, "estimated_minutes", 0, 100000) };
 }
-route("POST", "/plans", async c => ({ item: (await sb("POST", "plans", { body: { id: newId("P"), ...planFields(c.body) } }))[0] }));
-route("PUT", "/plans/([\\w-]+)", async (c, id) => {   // 예전 값은 DB 트리거가 plan_history에 남깁니다
-  const r = await sb("PATCH", "plans", { query: "id=" + eq(id), body: planFields(c.body) });
-  if (!r.length) throw new ApiError("계획을 찾을 수 없습니다.");
-  return { item: r[0] };
-});
-route("DELETE", "/plans/([\\w-]+)", async (c, id) => {
-  if (!(await sb("DELETE", "plans", { query: "id=" + eq(id) })).length) throw new ApiError("계획을 찾을 수 없습니다.");
-  return { ok: true };   // 할 일·기록·이력은 DB가 함께 지움(ON DELETE CASCADE)
-});
-route("GET", "/plans/([\\w-]+)/history", async (c, id) => ({ items: await sb("GET", "plan_history", { query: "select=*&plan_id=" + eq(id) + "&order=id.desc" }) }));
-route("PUT", "/plans/([\\w-]+)/carry", async (c, id) => {
-  const text = vText(c.body, "text", 200, false);
-  await sb("POST", "reviews", { query: "on_conflict=plan_id", body: { plan_id: id, carry_text: text, updated_at: new Date().toISOString() }, prefer: "resolution=merge-duplicates,return=minimal" });
-  return { ok: true, carry_text: text };
-});
+route("GET", "/plans", async () => ({ items: await rpc("plans_list") }));
+route("POST", "/plans", async c => ({ item: await rpc("plan_create", planArgs(c.body)) }));
+route("PUT", "/plans/([\\w-]+)", async (c, id) => ({ item: await rpc("plan_update", { p_id: id, ...planArgs(c.body) }) }));   // 예전 값은 DB 트리거가 plan_history에 남김
+route("DELETE", "/plans/([\\w-]+)", async (c, id) => rpc("plan_delete", { p_id: id }));
+route("GET", "/plans/([\\w-]+)/history", async (c, id) => ({ items: await rpc("plan_history_list", { p_id: id }) }));
+route("PUT", "/plans/([\\w-]+)/carry", async (c, id) => rpc("plan_carry", { p_id: id, p_text: vText(c.body, "text", 200, false) }));
 
 // 할 일 (거르기·검색·정렬은 DB의 todo_list 함수가 합니다)
 const SORTS = { deadline: "마감일", priority: "우선순위", estimate: "예상 시간", created: "만든 순서", title: "제목" };
@@ -267,26 +270,16 @@ route("GET", "/todos", async c => {
   if (sort === "deadline" || sort === "estimate") desc += " · 값이 비어 있는 할 일은 항상 맨 뒤";
   return { items, sort, dir, sort_description: desc + " · 거르기와 정렬은 DB에서 처리" };
 });
-function todoFields(b){
-  return { plan_id: vText(b, "plan_id", 40), title: vText(b, "title", 200), deadline: vDate(b, "deadline", false), priority: vInt(b, "priority", 1, 3),
-    tags: vTags(b.tags), estimated_minutes: vInt(b, "estimated_minutes", 0, 100000, false) };
+function todoArgs(b){
+  return { p_plan_id: vText(b, "plan_id", 40), p_title: vText(b, "title", 200), p_deadline: vDate(b, "deadline", false), p_priority: vInt(b, "priority", 1, 3),
+    p_tags: vTags(b.tags), p_estimated: vInt(b, "estimated_minutes", 0, 100000, false) };
 }
-route("POST", "/todos", async c => {
-  const id = newId("T");
-  await sb("POST", "todos", { body: { id, ...todoFields(c.body) }, prefer: "return=minimal" });
-  return { item: await oneTodo(id) };
-});
+route("POST", "/todos", async c => ({ item: await rpc("todo_create", todoArgs(c.body)) }));
 route("PUT", "/todos/([\\w-]+)", async (c, id) => {
-  const f = todoFields(c.body), status = c.body.status;
-  if (status !== undefined && !["todo", "doing"].includes(status)) throw new ApiError("진행 상태는 '할 일' 또는 '진행 중'만 직접 바꿀 수 있습니다.");
-  const body = status === undefined ? f : { ...f, status };   // 완료·되돌리기는 DB 트리거가 전용 기능으로만 허용
-  if (!(await sb("PATCH", "todos", { query: "id=" + eq(id), body, prefer: "return=representation" })).length) throw new ApiError("할 일을 찾을 수 없습니다.");
-  return { item: await oneTodo(id) };
+  const status = c.body.status === "todo" || c.body.status === "doing" ? c.body.status : null;   // 완료·되돌리기는 전용 기능으로만
+  return { item: await rpc("todo_update", { p_id: id, ...todoArgs(c.body), p_status: status }) };
 });
-route("DELETE", "/todos/([\\w-]+)", async (c, id) => {
-  if (!(await sb("DELETE", "todos", { query: "id=" + eq(id) })).length) throw new ApiError("할 일을 찾을 수 없습니다.");
-  return { ok: true };
-});
+route("DELETE", "/todos/([\\w-]+)", async (c, id) => rpc("todo_delete", { p_id: id }));
 
 function idemKey(c, fallback){
   const key = String(c.headers["Idempotency-Key"] || c.body.idempotency_key || "").trim();
@@ -303,29 +296,16 @@ route("POST", "/todos/([\\w-]+)/complete", async (c, id) => {
   const r = await rpc("complete_todo", { p_todo_id: id, p_key: idemKey(c, null), ...logArgs(c.body) });
   return { duplicate: r.duplicate, log: r.log, item: await oneTodo(id) };
 });
-route("POST", "/todos/([\\w-]+)/reopen", async (c, id) => {
-  await rpc("reopen_todo", { p_todo_id: id });
-  return { item: await oneTodo(id) };
-});
+route("POST", "/todos/([\\w-]+)/reopen", async (c, id) => { await rpc("reopen_todo", { p_todo_id: id }); return { item: await oneTodo(id) }; });
 
 // 실행 기록
-route("GET", "/logs", async c => {
-  const rows = await sb("GET", "exec_logs", { query: "select=*,todos(title,plan_id)&order=seq.desc" + (c.query.get("todo_id") ? "&todo_id=" + eq(c.query.get("todo_id")) : "") });
-  return { items: rows.map(({ todos, ...l }) => ({ ...l, todo_title: todos && todos.title, plan_id: todos && todos.plan_id })) };
-});
+route("GET", "/logs", async c => ({ items: await rpc("log_list", { p_todo_id: c.query.get("todo_id") || null }) }));
 route("POST", "/logs", async c => {
   const key = idemKey(c, "");
   if (!key) throw new ApiError("Idempotency-Key(또는 idempotency_key)가 필요합니다.");
-  const r = await rpc("add_log", { p_todo_id: vText(c.body, "todo_id", 40), p_key: key, ...logArgs(c.body) });
-  return { duplicate: r.duplicate, log: r.log };
+  return rpc("add_log", { p_todo_id: vText(c.body, "todo_id", 40), p_key: key, ...logArgs(c.body) });
 });
-route("DELETE", "/logs/([\\w-]+)", async (c, id) => {
-  const r = (await sb("GET", "exec_logs", { query: "select=id,is_completion&id=" + eq(id) }))[0];
-  if (!r) throw new ApiError("기록을 찾을 수 없습니다.");
-  if (r.is_completion) throw new ApiError("완료 기록은 지울 수 없습니다. 할 일을 되돌린 뒤 지우세요.");
-  await sb("DELETE", "exec_logs", { query: "id=" + eq(id), prefer: "return=minimal" });
-  return { ok: true };
-});
+route("DELETE", "/logs/([\\w-]+)", async (c, id) => rpc("log_delete", { p_id: id }));
 
 // 돌아보기 (집계는 DB 함수)
 const reviewArgs = c => ({ p_plan_id: c.query.get("plan_id") || null, p_from: c.query.get("from") ? vDate({ from: c.query.get("from") }, "from") : null,
@@ -333,6 +313,22 @@ const reviewArgs = c => ({ p_plan_id: c.query.get("plan_id") || null, p_from: c.
 route("GET", "/review", async c => rpc("review_summary", reviewArgs(c)));
 route("GET", "/review/records", async c => rpc("review_records", { p_metric: c.query.get("metric") || "", ...reviewArgs(c) }));
 route("GET", "/review/periods", async c => { const a = reviewArgs(c); return { items: await rpc("review_by_period", { p_from: a.p_from, p_to: a.p_to }) }; });
+
+// 5일 기록
+route("GET", "/experiment", async () => rpc("experiment_summary"));
+route("POST", "/experiment", async c => rpc("experiment_save", { p_question: vText(c.body, "question", 200), p_metric: vText(c.body, "metric_name", 60),
+  p_unit: vText(c.body, "unit", 20), p_digits: vInt(c.body, "rounding_digits", 0, 3), p_week_start: vInt(c.body, "week_start", 1, 7) }));
+route("POST", "/daily", async c => {
+  const n = Number(c.body.value);
+  if (c.body.value === "" || c.body.value == null || !Number.isFinite(n) || n < 0 || n > 99999999) throw new ApiError("값은 0 이상의 숫자로 적어 주세요.");
+  return rpc("daily_save", { p_value: n, p_note: vText(c.body, "note", 200, false) });
+});
+route("POST", "/rule-change", async c => rpc("rule_change_save", { p_reason: vText(c.body, "reason", 300), p_before: vText(c.body, "rule_before", 200), p_after: vText(c.body, "rule_after", 200) }));
+
+// 내 계정
+const exportData = () => rpc("export_all");
+const importT06 = data => rpc("import_t06", { p: data });
+async function deleteAccount(){ await rpc("delete_my_account"); await client().auth.signOut({ scope: "local" }).catch(() => {}); }
 
 // 화면에서 쓰는 호출 창구: api("GET", "/api/todos?sort=priority")
 async function api(method, path, body, headers = {}){
@@ -346,7 +342,10 @@ async function api(method, path, body, headers = {}){
 }
 /* ===== DATA ENGINE END ===== */
 
-async function guard(fn){ try { return await fn(); } catch (e) { toast(e.message, true); } }
+async function guard(fn){
+  try { return await fn(); }
+  catch (e){ if (e.authLost){ showAuth(e.message); return; } toast(e.message, true); }
+}
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
 const PRIO = { 1: "높음", 2: "보통", 3: "낮음" };
 const STATUS = { todo: "할 일", doing: "진행 중", done: "완료" };
@@ -366,34 +365,74 @@ const S = { plans: [], planId: "", meta: null, tab: "plan",
 
 async function loadPlans(){ S.plans = (await api("GET", "/api/plans")).items; }
 async function loadMeta(){
-  try {
-    S.meta = await api("GET", "/api/meta");
-    $("#status").textContent = "서버 DB 연결됨 · 오늘(서울) " + S.meta.today_seoul;
-    $("#notice").textContent = S.meta.public_notice;
-    $("#fatal").replaceChildren();
-  } catch (e) {
-    $("#status").textContent = "서버 연결 실패";
-    $("#fatal").replaceChildren(h("div", { class: "banner-err" }, e.message));
-    throw e;
-  }
+  S.meta = await api("GET", "/api/meta");
+  $("#status").textContent = S.email + " · 오늘(서울) " + S.meta.today_seoul;
 }
 function planSelect(value, withAll){
   return h("select", { value }, withAll ? h("option", { value: "" }, "전체 계획") : null,
     S.plans.map(p => h("option", { value: p.id }, p.title + " (" + p.id + ")")));
 }
 
+/* ============ 로그인 화면 ============ */
+let authMode = "login";
+function showAuth(msg){
+  S.signedIn = false; S.plans = []; S.email = "";
+  $("#tabs").replaceChildren(); $("#logoutBtn").hidden = true;
+  $("#status").textContent = "로그인하지 않음";
+  $("#notice").textContent = "처음이면 가입한 뒤 로그인하세요. 로그인한 본인의 자료만 보이며, 다른 사람은 내 자료를 읽거나 고칠 수 없습니다.";
+  $("#view").replaceChildren(authCard(msg));
+}
+function authCard(msg){
+  const signup = authMode === "signup";
+  const email = h("input", { type: "email", autocomplete: "email", maxlength: 120, required: true });
+  const pw = h("input", { type: "password", autocomplete: signup ? "new-password" : "current-password", maxlength: 72, required: true });
+  const pw2 = signup ? h("input", { type: "password", autocomplete: "new-password", maxlength: 72, required: true }) : null;
+  const err = h("p", { class: "bad small", role: "alert" }, msg || "");
+  const btn = h("button", { class: "btn", type: "submit" }, signup ? "가입하기" : "로그인");
+  return h("form", { class: "card edit", style: "max-width:420px;margin:0 auto", onsubmit: ev => { ev.preventDefault(); (async () => {
+      err.textContent = ""; btn.disabled = true;
+      try {
+        const e = email.value.trim();
+        if (!/^\S+@\S+\.\S+$/.test(e)) throw new Error("이메일 형식으로 적어 주세요.");
+        if (signup){
+          if (pw.value.length < 8) throw new Error("비밀번호는 8자 이상이어야 합니다.");
+          if (pw.value !== pw2.value) throw new Error("비밀번호 확인이 서로 다릅니다.");
+          await signUp(e, pw.value);
+        } else await signIn(e, pw.value);
+        pw.value = ""; if (pw2) pw2.value = "";
+        await go(S.tab);
+      } catch (x){ err.textContent = x.message; pw.value = ""; if (pw2) pw2.value = ""; }
+      finally { btn.disabled = false; }
+    })(); } },
+    h("h2", {}, signup ? "가입하기" : "로그인"),
+    h("p", { class: "muted small" }, signup ? "이메일과 비밀번호(8자 이상)로 내 계정을 만듭니다." : "가입한 이메일과 비밀번호로 들어옵니다."),
+    h("div", { class: "grid" }, field("이메일", email, "wide"), field("비밀번호", pw, "wide"), pw2 ? field("비밀번호 확인", pw2, "wide") : null),
+    err,
+    h("div", { class: "row", style: "justify-content:space-between;margin-top:8px" },
+      h("button", { class: "btn ghost", type: "button", onclick: () => { authMode = signup ? "login" : "signup"; showAuth(); } }, signup ? "이미 계정이 있어요" : "처음이에요, 가입하기"),
+      btn));
+}
+
 /* ============ 탭 ============ */
-const TABS = [["plan", "1 계획"], ["todo", "2 할 일"], ["log", "3 실제로 한 일"], ["review", "4 돌아보기"]];
+const TABS = [["plan", "1 계획"], ["todo", "2 할 일"], ["log", "3 실제로 한 일"], ["review", "4 돌아보기"], ["exp", "5 5일 기록"], ["account", "6 내 계정"]];
 function renderTabs(){
   $("#tabs").replaceChildren(...TABS.map(([id, label]) =>
     h("button", { role: "tab", "aria-selected": S.tab === id ? "true" : "false", onclick: () => go(id) }, label)));
 }
 async function go(tab){
-  S.tab = tab; location.hash = tab; renderTabs();
+  S.tab = TABS.some(t => t[0] === tab) ? tab : "plan"; location.hash = S.tab;
+  let session;
+  try { session = await currentSession(); $("#fatal").replaceChildren(); }
+  catch (e){ $("#fatal").replaceChildren(h("div", { class: "banner-err" }, e.message)); return; }
+  if (!session){ showAuth(); return; }
+  S.signedIn = true; S.email = session.user.email;
+  $("#logoutBtn").hidden = false;
+  $("#notice").textContent = "로그인한 본인의 자료만 보입니다. 다른 사람은 내 자료를 읽거나 고칠 수 없습니다.";
+  renderTabs();
   await guard(async () => {
     await loadMeta(); await loadPlans();
     const v = $("#view"); v.replaceChildren();
-    await ({ plan: viewPlan, todo: viewTodo, log: viewLog, review: viewReview }[tab])(v);
+    await ({ plan: viewPlan, todo: viewTodo, log: viewLog, review: viewReview, exp: viewExp, account: viewAccount }[S.tab])(v);
   });
 }
 
@@ -661,11 +700,139 @@ async function viewReview(v){
   draw();
 }
 
-$("#exportBtn").onclick = () => guard(async () => {
-  const blob = new Blob([JSON.stringify(await exportData(), null, 2)], { type: "application/json" });
-  const a = h("a", { href: URL.createObjectURL(blob), download: "plan-do-see-diary-" + todayKst() + ".json" });
+/* ============ 5일 기록 ============ */
+const WEEKDAYS = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"];
+async function viewExp(v){
+  const r = await api("GET", "/api/experiment");
+  if (!r.experiment){
+    const f = {
+      q: h("textarea", { maxlength: 200, placeholder: "예: 하루 30분 운동 계획을 나는 지킬 수 있을까?" }),
+      m: h("input", { maxlength: 60, placeholder: "예: 하루 실제 운동 시간" }),
+      u: h("input", { maxlength: 20, placeholder: "예: 분" }),
+      d: h("select", { value: "1" }, [0, 1, 2, 3].map(n => h("option", { value: n }, "소수 " + n + "째 자리까지"))),
+      w: h("select", { value: "1" }, WEEKDAYS.map((n, i) => h("option", { value: i + 1 }, n))),
+    };
+    const save = h("button", { class: "btn", type: "submit" }, "질문과 지표 고정하기");
+    v.append(h("form", { class: "card edit", onsubmit: ev => { ev.preventDefault(); guard(async () => {
+        save.disabled = true;
+        try {
+          await api("POST", "/api/experiment", { question: f.q.value, metric_name: f.m.value, unit: f.u.value, rounding_digits: +f.d.value, week_start: +f.w.value });
+          toast("고정했습니다. 이제 매일 값을 기록하세요."); go("exp");
+        } finally { save.disabled = false; }
+      }); } },
+      h("h2", {}, "1일차: 5일 동안 알아볼 질문 정하기"),
+      h("p", { class: "muted small" }, "질문 한 문장, 관찰 지표 하나, 단위를 정합니다. 첫 기록을 남긴 뒤에는 바꿀 수 없습니다."),
+      h("div", { class: "grid" }, field("질문(한 문장)", f.q, "wide"), field("관찰 지표", f.m), field("단위", f.u), field("반올림 자리", f.d), field("주 시작 요일", f.w)),
+      h("div", { class: "row end", style: "margin-top:10px" }, save)));
+    return;
+  }
+  const ex = r.experiment, u = ex.unit, n = r.total.days, today = r.records.find(x => x.record_date === r.today_seoul);
+  const full = n >= 5 && !today;
+  v.append(h("div", { class: "card" }, h("h2", {}, "질문"), h("p", { style: "font-weight:700" }, ex.question),
+    h("p", { class: "small" }, "관찰 지표: " + ex.metric_name + " (단위: " + u + ")"),
+    h("ul", { class: "small" }, Object.entries({ "평균": r.rules.average, "반올림": r.rules.rounding, "빠진 날": r.rules.missing, "같은 날 중복": r.rules.duplicate,
+      "유난히 튀는 값": r.rules.outlier, "주 시작 요일": r.rules.week_start }).map(([k, t]) => h("li", {}, k + ": " + t)))));
+
+  const val = h("input", { type: "number", min: 0, step: "0.01", value: today ? today.value : "" }), note = h("input", { maxlength: 200, value: today ? today.note : "", placeholder: "메모(선택)" });
+  const saveBtn = h("button", { class: "btn", type: "submit", disabled: full }, today ? "오늘 값 고치기" : "오늘 값 기록");
+  v.append(h("form", { class: "card" + (full ? "" : " edit"), onsubmit: ev => { ev.preventDefault(); guard(async () => {
+      saveBtn.disabled = true;
+      try {
+        const res = await api("POST", "/api/daily", { value: val.value, note: note.value });
+        toast(res.updated ? "오늘 값을 고쳤습니다(하루 1건)." : "오늘 기록을 남겼습니다."); go("exp");
+      } finally { saveBtn.disabled = false; }
+    }); } },
+    h("h2", {}, "오늘(서울 " + r.today_seoul + ") 기록 — " + n + "일째 / 5일"),
+    full ? h("p", { class: "ok" }, "5일 기록이 완성되었습니다.") : h("p", { class: "muted small" }, "날짜는 서버가 정합니다. 같은 날 다시 보내면 그날 값을 덮어씁니다."),
+    h("div", { class: "grid" }, field(ex.metric_name + " (" + u + ")", val), field("메모", note)),
+    h("div", { class: "row end", style: "margin-top:10px" }, saveBtn)));
+
+  const phaseChip = p => p === "before" ? h("span", { class: "chip" }, "변경 전") : p === "after" ? h("span", { class: "chip green" }, "변경 후") : "—";
+  v.append(h("div", { class: "card" }, h("h2", {}, "기록"),
+    r.records.length ? h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["날짜", "값(" + u + ")", "구분", "표시", "남긴 시각(서울)", "메모"].map(t => h("th", {}, t)))),
+      h("tbody", {}, r.records.map(d => h("tr", {}, h("td", {}, d.record_date), h("td", {}, d.value), h("td", {}, phaseChip(d.phase)),
+        h("td", {}, d.outlier ? h("span", { class: "chip orange" }, "유난히 튐") : "—"), h("td", {}, fmtKst(d.created_at)), h("td", {}, d.note || "—")))))) : h("p", { class: "muted" }, "아직 기록이 없습니다."),
+    r.missing_dates.length ? h("p", { class: "small" }, "빠진 날: " + r.missing_dates.join(", ") + " (평균의 날 수에서 뺌)") : null,
+    n ? h("p", { class: "small" }, "합계 확인: " + r.records.map(d => d.value).join(" + ") + " = " + r.total.sum + " " + u + " → 평균 " + r.total.sum + " ÷ " + n + " = " + r.total.avg + " " + u) : null));
+
+  const rc = r.rule_change;
+  if (rc){
+    v.append(h("div", { class: "card" }, h("h2", {}, "계획 규칙을 바꾼 기록"),
+      h("p", { class: "small" }, "바꾼 시각(서울): " + fmtKst(rc.changed_at) + " · 그때까지 쌓인 기록 " + rc.records_before + "일 (2일차 뒤, 3일차 앞)"),
+      h("p", { class: "small" }, "이유: " + rc.reason), h("p", { class: "small" }, "바꾸기 전: " + rc.rule_before + "  →  바꾼 뒤: " + rc.rule_after)));
+  } else {
+    const f = { r: h("input", { maxlength: 300 }), b: h("input", { maxlength: 200, placeholder: "예: 하루 30분 운동" }), a: h("input", { maxlength: 200, placeholder: "예: 하루 20분 운동" }) };
+    const can = n === 2, go2 = h("button", { class: "btn", type: "submit", disabled: !can }, "규칙 바꾸기 기록");
+    v.append(h("form", { class: "card", onsubmit: ev => { ev.preventDefault(); guard(async () => {
+        if (!confirm("계획 규칙은 한 번만 바꿀 수 있고, 바꾼 시각이 기록됩니다. 진행할까요?")) return;
+        go2.disabled = true;
+        try { await api("POST", "/api/rule-change", { reason: f.r.value, rule_before: f.b.value, rule_after: f.a.value }); toast("규칙 변경을 기록했습니다."); go("exp"); }
+        finally { go2.disabled = !can; }
+      }); } },
+      h("h2", {}, "계획 규칙 바꾸기 (한 번)"),
+      h("p", { class: "muted small" }, can ? "2일차 기록까지 남겼습니다. 3일차 기록을 하기 전에 계획 규칙을 하나만 바꿔 보세요." : "2일차 기록을 남긴 뒤, 3일차 기록 전에만 바꿀 수 있습니다. (지금 " + n + "일)"),
+      h("div", { class: "grid" }, field("바꾸는 이유", f.r, "wide"), field("바꾸기 전 규칙", f.b), field("바꾼 뒤 규칙", f.a)),
+      h("div", { class: "row end", style: "margin-top:10px" }, go2)));
+  }
+
+  if (r.before && r.after){
+    const row = (name, g) => h("tr", {}, h("td", {}, name), h("td", {}, g.days + "일"), h("td", {}, g.sum + " " + u), h("td", {}, g.avg == null ? "—" : g.avg + " " + u));
+    v.append(h("div", { class: "card" }, h("h2", {}, "규칙 바꾸기 전·후 비교"),
+      h("p", { class: "muted small" }, "같은 지표(" + ex.metric_name + "), 같은 단위(" + u + "), 같은 계산 규칙(평균 = 합계 ÷ 기록한 날 수)으로 비교합니다."),
+      h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["구분", "기록한 날", "합계", "평균"].map(t => h("th", {}, t)))),
+        h("tbody", {}, row("바꾸기 전", r.before), row("바꾼 뒤", r.after), row("전체", r.total)))),
+      h("p", { class: "small muted" }, "결과가 나빠졌어도 그대로 두세요. 왜 그렇게 됐는지 한 줄로 적어 두면 됩니다.")));
+  }
+  if (r.weeks.length) v.append(h("div", { class: "card" }, h("h2", {}, "주별 합계 (주 시작: " + r.rules.week_start + ")"),
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["주 시작일", "기록한 날", "합계"].map(t => h("th", {}, t)))),
+      h("tbody", {}, r.weeks.map(w => h("tr", {}, h("td", {}, w.week_start), h("td", {}, w.days + "일"), h("td", {}, w.sum + " " + u))))))));
+}
+
+/* ============ 내 계정 ============ */
+function downloadJson(name, obj){
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+  const a = h("a", { href: URL.createObjectURL(blob), download: name });
   document.body.append(a); a.click(); a.remove();
-});
+}
+async function viewAccount(v){
+  v.append(h("div", { class: "card" }, h("h2", {}, "내 계정"), h("p", {}, "로그인한 이메일: ", h("b", {}, S.email)),
+    h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => guard(async () => { await signOutNow(); showAuth("로그아웃했습니다."); }) }, "로그아웃"))));
+
+  v.append(h("div", { class: "card" }, h("h2", {}, "내 자료 내보내기"),
+    h("p", { class: "muted small" }, "내 계획·할 일·실행 기록·5일 기록을 파일 하나(JSON)로 내려받습니다. 다른 사람의 자료는 들어 있지 않습니다."),
+    h("button", { class: "btn", type: "button", onclick: () => guard(async () => downloadJson("plan-do-see-diary-" + todayKst() + ".json", await exportData())) }, "내 자료 내려받기")));
+
+  const file = h("input", { type: "file", accept: ".json,application/json" }), out = h("p", { class: "small" });
+  const impBtn = h("button", { class: "btn", type: "button", onclick: () => guard(async () => {
+      const fl = file.files[0];
+      if (!fl) throw new Error("6번에서 내보낸 파일을 먼저 고르세요.");
+      if (fl.size > 5 * 1024 * 1024) throw new Error("파일이 너무 큽니다(5MB 이하).");
+      let data;
+      try { data = JSON.parse(await fl.text()); } catch { throw new Error("JSON 파일이 아닙니다."); }
+      const c = k => Array.isArray(data[k]) ? data[k].length : 0;
+      if (!confirm("계획 " + c("plans") + "개, 할 일 " + c("todos") + "개, 실행 기록 " + c("exec_logs") + "개를 내 계정으로 가져옵니다. 이미 가져온 파일이면 중복되니 한 번만 하세요. 진행할까요?")) return;
+      impBtn.disabled = true;
+      try { const r = await importT06(data); out.textContent = "가져왔습니다: 계획 " + r.plans + "개 · 할 일 " + r.todos + "개 · 실행 기록 " + r.exec_logs + "개"; out.className = "small ok"; file.value = ""; }
+      finally { impBtn.disabled = false; }
+    }) }, "내 계정으로 가져오기");
+  v.append(h("div", { class: "card" }, h("h2", {}, "6번 다이어리 자료 가져오기"),
+    h("p", { class: "muted small" }, "6번 앱에서 '내 자료 내보내기'로 받은 파일을 골라 내 계정으로 옮깁니다. 번호(ID)는 새로 매겨집니다."), file,
+    h("div", { class: "row", style: "margin-top:8px" }, impBtn), out));
+
+  const typed = h("input", { placeholder: "삭제", style: "max-width:140px" });
+  const delBtn = h("button", { class: "btn danger", type: "button", disabled: true, onclick: () => guard(async () => {
+      if (!confirm("정말 계정을 삭제할까요? 내 자료도 함께 영구 삭제되고 되돌릴 수 없습니다.")) return;
+      delBtn.disabled = true;
+      await deleteAccount(); authMode = "login"; showAuth("계정과 내 자료를 삭제했습니다.");
+    }) }, "계정과 내 자료 삭제");
+  typed.oninput = () => { delBtn.disabled = typed.value.trim() !== "삭제"; };
+  v.append(h("div", { class: "card" }, h("h2", {}, "계정 삭제"),
+    h("p", { class: "small" }, "계정을 삭제하면 내 계획·할 일·실행 기록·5일 기록이 ", h("b", {}, "함께 영구 삭제"), "됩니다. 되돌릴 수 없습니다."),
+    h("div", { class: "row" }, h("span", { class: "small" }, "확인을 위해 '삭제'라고 입력:"), typed, delBtn)));
+}
+
+$("#logoutBtn").onclick = () => guard(async () => { await signOutNow(); showAuth("로그아웃했습니다."); });
+try { client().auth.onAuthStateChange(ev => { if (ev === "SIGNED_OUT" && S.signedIn) showAuth("로그아웃되었습니다."); }); } catch (e) { /* 설정 전에는 go() 가 안내를 띄운다 */ }
 
 /* ============ 시작 ============ */
 S.tab = (location.hash || "#plan").slice(1);

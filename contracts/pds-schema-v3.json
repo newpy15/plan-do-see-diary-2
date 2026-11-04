@@ -1,0 +1,67 @@
+{
+  "schema_version": "pds-schema-v3",
+  "app": "플랜두씨 다이어리 2 — 로그인이 붙은 계획·실제 기록",
+  "based_on": "contracts/pds-schema-v2.json (과제 6). v3 는 v2 에 '주인(user_id)'과 5일 기록 표를 더하고, 접근 방식을 바꾼 것이다.",
+  "database": "Supabase (PostgreSQL). 만드는 SQL 은 supabase.sql",
+  "auth": {
+    "service": "Supabase Auth (GoTrue). 가입·로그인·로그아웃·비밀번호 보관·로그인 값(JWT) 발급을 맡는다",
+    "library": "@supabase/supabase-js 2.117.0 (vendor/supabase-js-2.117.0.js 로 저장소에 포함)",
+    "password_storage": "bcrypt 로 바꿔 auth.users.encrypted_password 에 저장 (되돌릴 수 없음, 계정마다 다른 소금값)",
+    "session": "로그인하면 auth.sessions 에 세션이 생기고, 로그인 값(access token, JWT)에 session_id 와 만료 시각(exp)이 실린다. 로그아웃하면 세션이 지워진다",
+    "request_check": "모든 요청 앞에서 check_session() 이 세션이 살아 있는지 확인하고, 없으면 401 로 거절한다 (pgrst.db_pre_request)"
+  },
+  "date_rules": {
+    "date": "PostgreSQL date, 'YYYY-MM-DD'. 계획 기간·마감일·기록 날짜(record_date)",
+    "datetime": "PostgreSQL timestamptz. 저장은 UTC, 입력과 화면 표시는 항상 서울(Asia/Seoul, +09:00)",
+    "today": "DB 함수 seoul_today() 가 서울 시간으로 계산. 5일 기록의 날짜(record_date)도 서버가 오늘(서울)로 정한다",
+    "minutes_unit": "시간은 '분' 정수(*_minutes). 5일 기록의 값은 사용자가 정한 단위(experiment.unit)"
+  },
+  "access_rules": [
+    "모든 표의 읽기·쓰기 권한은 anon, authenticated 어느 쪽에도 주지 않는다 (RLS 도 켬). 표를 직접 요청하면 401/403",
+    "자료는 SECURITY DEFINER 함수로만 다루며, 함수는 auth.uid() 로 '지금 요청한 사람'을 확인해 그 사람(user_id)의 자료만 다룬다",
+    "남의 자료를 가리키거나 없는 id 를 가리키면 똑같이 404 (존재 여부를 알려 주지 않는다)",
+    "로그인하지 않았으면(auth.uid() 없음) 401",
+    "user_id 는 요청에서 받지 않고 항상 서버가 auth.uid() 로 정한다. 응답에도 싣지 않는다"
+  ],
+  "tables": {
+    "plans": { "purpose": "내 계획", "primary_key": "id", "owner": "user_id uuid → auth.users(id) ON DELETE CASCADE",
+      "columns": { "seq": "bigint identity", "id": "text 'P-'+8자리", "title": "text 1~200자", "category": "text 1~30자", "start_date": "date", "end_date": "date ≥ start_date",
+        "priority": "smallint 1~3", "success_criteria": "text 1~500자", "estimated_minutes": "integer ≥ 0", "created_at": "timestamptz", "updated_at": "timestamptz" } },
+    "plan_history": { "purpose": "계획을 고칠 때 바뀐 항목의 예전 값·지금 값 (트리거가 자동 기록)", "primary_key": "id", "owner": "user_id",
+      "columns": { "plan_id": "text → plans.id CASCADE", "field": "text", "old_value": "text", "new_value": "text", "changed_at": "timestamptz" } },
+    "todos": { "purpose": "계획에 딸린 할 일", "primary_key": "id", "owner": "user_id",
+      "columns": { "seq": "bigint identity", "id": "text 'T-'+8자리", "plan_id": "text → plans.id CASCADE", "title": "text 1~200자",
+        "status": "todo | doing | done (done 으로 바꾸거나 되돌리는 일은 complete_todo / reopen_todo 로만)", "deadline": "date null", "priority": "smallint 1~3",
+        "tags": "text[]", "estimated_minutes": "integer null", "completed_at": "timestamptz null", "created_at": "timestamptz", "updated_at": "timestamptz" } },
+    "exec_logs": { "purpose": "실제로 한 일의 기록", "primary_key": "id", "owner": "user_id",
+      "columns": { "seq": "bigint identity", "id": "text 'L-'+8자리", "todo_id": "text → todos.id CASCADE", "started_at": "timestamptz null", "ended_at": "timestamptz null",
+        "actual_minutes": "integer null", "blocked_reason": "text", "is_completion": "boolean", "idempotency_key": "text", "created_at": "timestamptz" },
+      "constraints": ["UNIQUE(user_id, idempotency_key)", "UNIQUE(todo_id) WHERE is_completion — 할 일 하나에 완료 기록은 최대 1건"] },
+    "reviews": { "purpose": "다음 계획으로 넘길 한 줄", "primary_key": "plan_id", "owner": "user_id", "columns": { "plan_id": "text → plans.id CASCADE", "carry_text": "text ≤ 200자", "updated_at": "timestamptz" } },
+    "experiment": { "purpose": "5일 기록의 질문·지표·단위 (사용자당 1건, 첫 기록 뒤에는 고정)", "primary_key": "user_id", "owner": "user_id",
+      "columns": { "question": "text 1~200자", "metric_name": "text 1~60자", "unit": "text 1~20자", "rounding_digits": "smallint 0~3", "week_start": "smallint 1(월)~7(일)", "created_at": "timestamptz" } },
+    "daily_records": { "purpose": "날짜별 값 (하루 1건, 최대 5일)", "primary_key": "id", "owner": "user_id",
+      "columns": { "record_date": "date (서버가 오늘(서울)로 정함)", "value": "numeric(10,2) ≥ 0", "note": "text ≤ 200자", "created_at": "timestamptz", "updated_at": "timestamptz" },
+      "constraints": ["UNIQUE(user_id, record_date)"] },
+    "rule_changes": { "purpose": "계획 규칙 변경 기록 (사용자당 1건, 2일차 기록 뒤·3일차 기록 앞에서만)", "primary_key": "id", "owner": "user_id UNIQUE",
+      "columns": { "changed_at": "timestamptz (서버 시각)", "reason": "text", "rule_before": "text", "rule_after": "text", "records_before": "smallint (바꿀 때까지의 기록 일수, 2)" } }
+  },
+  "five_day_rules": {
+    "average": "평균 = 값이 있는 날의 합계 ÷ 값이 있는 날 수",
+    "rounding": "설정한 소수 자리(0~3)까지 반올림, 0.5 는 올림",
+    "missing": "기록하지 않은 날은 '빠짐'으로 표시하고 평균의 날 수에서 뺀다",
+    "duplicate": "하루에 한 건만 저장하고, 같은 날 다시 보내면 그날 값을 덮어쓴다",
+    "outlier": "기록이 3일 이상일 때 중앙값의 2배 이상이거나 절반 이하인 값은 '유난히 튐'으로 표시하되 계산에는 넣는다",
+    "week_start": "사용자가 고른 요일(기본 월요일)"
+  },
+  "functions": {
+    "plans_list / plan_create / plan_update / plan_delete / plan_history_list / plan_carry": "계획",
+    "todo_list / todo_get / todo_create / todo_update / todo_delete / complete_todo / reopen_todo": "할 일 (거르기·검색·정렬은 DB)",
+    "add_log / log_list / log_delete": "실행 기록",
+    "review_summary / review_records / review_by_period": "돌아보기",
+    "experiment_save / daily_save / rule_change_save / experiment_summary": "5일 기록",
+    "export_all / import_t06 / delete_my_account": "내보내기 / 6번 자료 가져오기 / 계정과 내 자료 삭제",
+    "check_session": "모든 요청 앞에서 세션이 살아 있는지 확인(없으면 401)",
+    "seoul_today / new_id / require_user": "도우미"
+  }
+}
