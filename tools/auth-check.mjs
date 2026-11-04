@@ -137,9 +137,13 @@ try {
   // 5. 주소·헤더·본문에 다른 계정을 적기
   h2("5. 주소·요청 헤더·요청 본문에 다른 계정을 적어 보낸 요청");
   const bId = claims(tokB).sub;
-  const h1 = await http("POST", `/rest/v1/rpc/todo_list?user_id=eq.${bId}`, { token: tokA, body: {}, headers: { "X-User-Id": bId, "X-Forwarded-User": bId } });
-  line(`- 주소에 \`?user_id=eq.<B>\`, 헤더에 \`X-User-Id: <B>\` 를 적고 A의 로그인 값으로 목록 요청: **${h1.status}**, 돌아온 할 일 ${Array.isArray(h1.json) ? h1.json.length : "?"}건`);
-  check("그래도 A의 자료만 돌아온다(B의 ID 없음)", h1.status === 200 && Array.isArray(h1.json) && !JSON.stringify(h1.json).includes(B.todo.id) && h1.json.some(t => t.id === A.todo.id));
+  const onlyA = j => Array.isArray(j) && !JSON.stringify(j).includes(B.todo.id) && j.some(t => t.id === A.todo.id);
+  const h1 = await http("POST", "/rest/v1/rpc/todo_list", { token: tokA, body: {}, headers: { "X-User-Id": bId, "X-Forwarded-User": bId } });
+  line(`- 헤더에 \`X-User-Id: <B>\` 를 적고 A의 로그인 값으로 목록 요청: **${h1.status}**, 돌아온 할 일 ${Array.isArray(h1.json) ? h1.json.length : "?"}건`);
+  check("헤더에 남의 계정을 적어도 A의 자료만 돌아온다(B의 ID 없음)", h1.status === 200 && onlyA(h1.json));
+  const h1q = await http("POST", `/rest/v1/rpc/todo_list?user_id=eq.${bId}`, { token: tokA, body: {} });
+  line(`- 주소에 \`?user_id=eq.<B>\` 를 붙여 A의 로그인 값으로 목록 요청: ${req("POST", "/rest/v1/rpc/todo_list?user_id=eq.<B>", h1q)}`);
+  check("주소에 남의 계정을 적은 요청은 거절되거나, 돌아와도 A의 자료뿐이다", (h1q.status >= 400 && !JSON.stringify(h1q.json).includes(B.todo.id)) || (h1q.status === 200 && onlyA(h1q.json)), `상태 ${h1q.status}`);
   const h3 = await rpc("plan_create", { user_id: bId, p_title: "x", p_category: "x", p_start: "2026-11-01", p_end: "2026-11-02", p_priority: 1, p_criteria: "x", p_estimated: 1 }, tokA);
   line(`- 본문에 \`user_id: <B>\` 를 몰래 끼워 A가 계획 만들기: ${req("POST", "/rest/v1/rpc/plan_create", h3)}`);
   check("남의 계정 번호를 본문에 적어도 받아들이지 않는다", h3.status >= 400 && !(await rpc("plans_list", {}, tokB)).json.some(p => p.title === "x"));
@@ -175,8 +179,9 @@ try {
   for (const [n, tok] of [["A", tokA], ["B", tokB]]) if (created[n] && tok) await rpc("plan_delete", { p_id: created[n].plan.id }, tok).catch(() => {});
   out.splice(1, 0, `\n**결과: ✅ ${pass}개 통과 / ❌ ${fail}개 실패**`);
   const text = out.join("\n") + "\n";
-  fs.mkdirSync(path.join(here, "..", "docs"), { recursive: true });
-  fs.writeFileSync(path.join(here, "..", "docs", "auth-check-result.md"), text);
+  const outDir = process.env.PDS_OUT_DIR || path.join(here, "..", "docs");   // (시험용으로만 바꿈. 보통은 docs/)
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, "auth-check-result.md"), text);
   console.log("\n" + text);
   console.log("→ docs/auth-check-result.md 에 저장했습니다. (비밀번호·전체 토큰은 들어 있지 않습니다)");
   process.exit(fail ? 1 : 0);
