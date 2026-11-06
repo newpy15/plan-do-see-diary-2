@@ -342,6 +342,18 @@ async function api(method, path, body, headers = {}){
 }
 /* ===== DATA ENGINE END ===== */
 
+// 확인 창: 브라우저의 confirm() 은 일부 환경(앱 안 브라우저 등)에서 아예 안 뜨고 "취소"로 처리되므로, 화면 안에 직접 그린다.
+function uiConfirm(message){
+  return new Promise(resolve => {
+    const done = v => { overlay.remove(); resolve(v); };
+    const okBtn = h("button", { class: "btn", type: "button", onclick: () => done(true) }, "확인");
+    const overlay = h("div", { role: "dialog", "aria-modal": "true", style: "position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px" },
+      h("div", { class: "card", style: "max-width:440px;margin:0" },
+        h("p", { style: "font-weight:600;white-space:pre-wrap" }, message),
+        h("div", { class: "row end" }, h("button", { class: "btn ghost", type: "button", onclick: () => done(false) }, "취소"), okBtn)));
+    document.body.append(overlay); okBtn.focus();
+  });
+}
 async function guard(fn){
   try { return await fn(); }
   catch (e){ if (e.authLost){ showAuth(e.message); return; } toast(e.message, true); }
@@ -492,7 +504,7 @@ async function viewPlan(v){
             hist.hidden = false; }) }, "수정 이력"),
         h("button", { class: "btn sm ghost", onclick: () => { S.planId = p.id; go("todo"); } }, "할 일 보기"),
         h("button", { class: "btn sm danger", onclick: () => guard(async () => {
-            if (!confirm("계획과 딸린 할 일·실행 기록이 모두 지워집니다. 지울까요?")) return;
+            if (!(await uiConfirm("계획과 딸린 할 일·실행 기록이 모두 지워집니다. 지울까요?"))) return;
             await api("DELETE", "/api/plans/" + p.id); if (S.planId === p.id) S.planId = ""; toast("지웠습니다."); go("plan"); }) }, "지우기")),
       hist));
   }
@@ -597,7 +609,7 @@ function todoRow(t){
       h("button", { class: "btn sm ghost", onclick: () => { S.logTodo = t.id; go("log"); } }, "기록 남기기"),
       h("button", { class: "btn sm ghost", onclick: () => { S.editTodo = t; go("todo"); window.scrollTo(0, 0); } }, "고치기"),
       h("button", { class: "btn sm danger", onclick: () => guard(async () => {
-          if (!confirm("이 할 일과 실행 기록을 지울까요?")) return;
+          if (!(await uiConfirm("이 할 일과 실행 기록을 지울까요?"))) return;
           await api("DELETE", "/api/todos/" + t.id); toast("지웠습니다."); go("todo"); }) }, "지우기")),
     panel);
 }
@@ -764,7 +776,7 @@ async function viewExp(v){
     const f = { r: h("input", { maxlength: 300 }), b: h("input", { maxlength: 200, placeholder: "예: 하루 30분 운동" }), a: h("input", { maxlength: 200, placeholder: "예: 하루 20분 운동" }) };
     const can = n === 2, go2 = h("button", { class: "btn", type: "submit", disabled: !can }, "규칙 바꾸기 기록");
     v.append(h("form", { class: "card", onsubmit: ev => { ev.preventDefault(); guard(async () => {
-        if (!confirm("계획 규칙은 한 번만 바꿀 수 있고, 바꾼 시각이 기록됩니다. 진행할까요?")) return;
+        if (!(await uiConfirm("계획 규칙은 한 번만 바꿀 수 있고, 바꾼 시각이 기록됩니다. 진행할까요?"))) return;
         go2.disabled = true;
         try { await api("POST", "/api/rule-change", { reason: f.r.value, rule_before: f.b.value, rule_after: f.a.value }); toast("규칙 변경을 기록했습니다."); go("exp"); }
         finally { go2.disabled = !can; }
@@ -810,7 +822,7 @@ async function viewAccount(v){
       let data;
       try { data = JSON.parse(await fl.text()); } catch { throw new Error("JSON 파일이 아닙니다."); }
       const c = k => Array.isArray(data[k]) ? data[k].length : 0;
-      if (!confirm("계획 " + c("plans") + "개, 할 일 " + c("todos") + "개, 실행 기록 " + c("exec_logs") + "개를 내 계정으로 가져옵니다. 이미 가져온 파일이면 중복되니 한 번만 하세요. 진행할까요?")) return;
+      if (!(await uiConfirm("계획 " + c("plans") + "개, 할 일 " + c("todos") + "개, 실행 기록 " + c("exec_logs") + "개를 내 계정으로 가져옵니다. 이미 가져온 파일이면 중복되니 한 번만 하세요. 진행할까요?"))) return;
       impBtn.disabled = true;
       try { const r = await importT06(data); out.textContent = "가져왔습니다: 계획 " + r.plans + "개 · 할 일 " + r.todos + "개 · 실행 기록 " + r.exec_logs + "개"; out.className = "small ok"; file.value = ""; }
       finally { impBtn.disabled = false; }
@@ -821,7 +833,7 @@ async function viewAccount(v){
 
   const typed = h("input", { placeholder: "삭제", style: "max-width:140px" });
   const delBtn = h("button", { class: "btn danger", type: "button", disabled: true, onclick: () => guard(async () => {
-      if (!confirm("정말 계정을 삭제할까요? 내 자료도 함께 영구 삭제되고 되돌릴 수 없습니다.")) return;
+      if (!(await uiConfirm("정말 계정을 삭제할까요? 내 자료도 함께 영구 삭제되고 되돌릴 수 없습니다."))) return;
       delBtn.disabled = true;
       await deleteAccount(); authMode = "login"; showAuth("계정과 내 자료를 삭제했습니다.");
     }) }, "계정과 내 자료 삭제");
