@@ -569,6 +569,11 @@ begin
   if (select count(*) from daily_records where user_id = v) >= 5
      and not exists (select 1 from daily_records where user_id = v and record_date = d) then
     raise exception '5일 기록이 이미 완성되었습니다.'; end if;
+  -- 2일차 기록 뒤에는 계획 규칙을 먼저 바꿔 기록해야 새 날짜(3일차)를 기록할 수 있다. (규칙 변경은 3일차 기록 전에만 가능하므로 순서를 서버가 지킨다)
+  if (select count(*) from daily_records where user_id = v) >= 2
+     and not exists (select 1 from rule_changes where user_id = v)
+     and not exists (select 1 from daily_records where user_id = v and record_date = d) then
+    raise exception '먼저 계획 규칙을 바꿔 기록하세요. 3일차 값은 규칙을 바꾼 뒤에만 기록할 수 있습니다. (5일 기록 탭의 "계획 규칙 바꾸기")'; end if;
   if exists (select 1 from daily_records where user_id = v and record_date = d) then
     update daily_records set value = p_value, note = btrim(coalesce(p_note, '')), updated_at = now() where user_id = v and record_date = d;
     updated := true;
