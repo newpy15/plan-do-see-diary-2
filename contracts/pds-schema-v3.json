@@ -52,7 +52,8 @@
     "missing": "기록하지 않은 날은 '빠짐'으로 표시하고 평균의 날 수에서 뺀다",
     "duplicate": "하루에 한 건만 저장하고, 같은 날 다시 보내면 그날 값을 덮어쓴다",
     "outlier": "기록이 3일 이상일 때 중앙값의 2배 이상이거나 절반 이하인 값은 '유난히 튐'으로 표시하되 계산에는 넣는다",
-    "week_start": "사용자가 고른 요일(기본 월요일)"
+    "week_start": "사용자가 고른 요일(기본 월요일)",
+    "order": "기록이 2일 이상이고 규칙 변경이 아직 없으면 새 날짜 값을 기록할 수 없다(daily_save). 규칙 변경은 2일차 기록 뒤·3일차 기록 앞에서만 가능하다(rule_change_save)"
   },
   "functions": {
     "plans_list / plan_create / plan_update / plan_delete / plan_history_list / plan_carry": "계획",
